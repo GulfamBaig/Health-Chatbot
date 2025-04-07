@@ -1,6 +1,38 @@
 import streamlit as st
 import pandas as pd
 import pickle
+import sys
+from importlib import import_module
+
+# Check for required packages
+def check_dependencies():
+    required = {
+        'scikit-learn': 'sklearn',
+        'pandas': 'pandas',
+        'pickle-mixin': 'pickle'
+    }
+    
+    missing = []
+    for pkg, module in required.items():
+        try:
+            import_module(module)
+        except ImportError:
+            missing.append(pkg)
+    
+    if missing:
+        st.error(f"Missing required packages: {', '.join(missing)}")
+        st.markdown("""
+            Please install them using:
+            ```
+            pip install scikit-learn pandas
+            ```
+            Or add them to your `requirements.txt` file.
+        """)
+        st.stop()
+
+check_dependencies()
+
+# Now safely import sklearn components
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
@@ -15,6 +47,7 @@ def load_models():
         return vectorizer, model
     except Exception as e:
         st.error(f"Error loading models: {e}")
+        st.error("Please make sure the model files (vectorizer.pkl and chatbot_model.pkl) are in the correct directory.")
         return None, None
 
 @st.cache_data
@@ -23,6 +56,7 @@ def load_data():
         return pd.read_csv('medical_qa.csv')
     except Exception as e:
         st.error(f"Error loading data: {e}")
+        st.error("Please make sure medical_qa.csv exists in the correct directory.")
         return pd.DataFrame(columns=['question', 'answer'])
 
 # Initialize the app
@@ -67,9 +101,13 @@ def main():
     vectorizer, model = load_models()
     qa_data = load_data()
 
-    if vectorizer is None or model is None or qa_data.empty:
-        st.error("Failed to load required resources. Please check the error messages above.")
-        return
+    if vectorizer is None or model is None:
+        st.error("Failed to load AI models. The chatbot cannot function without these.")
+        st.stop()
+
+    if qa_data.empty:
+        st.error("Failed to load medical Q&A data. The chatbot cannot function without this.")
+        st.stop()
 
     # Chat interface
     if "messages" not in st.session_state:
@@ -83,10 +121,13 @@ def main():
         try:
             input_vec = vectorizer.transform([user_input])
             pred_class = model.predict(input_vec)[0]
-            return qa_data.loc[qa_data['question'] == pred_class, 'answer'].values[0]
+            answers = qa_data.loc[qa_data['question'] == pred_class, 'answer']
+            if not answers.empty:
+                return answers.values[0]
+            return "I couldn't find a specific answer to that question. Please try rephrasing."
         except Exception as e:
             st.error(f"Error generating response: {e}")
-            return "I'm sorry, I couldn't process your question. Please try again."
+            return "I'm having trouble answering that. Please try a different question."
 
     if prompt := st.chat_input("Ask a health-related question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -103,7 +144,7 @@ def main():
     with st.sidebar:
         st.markdown("### 💡 Sample Questions")
         st.markdown("Try asking about:")
-        for question in qa_data['question'].sample(5):
+        for question in qa_data['question'].sample(min(5, len(qa_data))):  # Handle case with <5 questions
             st.markdown(f"- {question}")
         
         st.markdown("---")
@@ -113,6 +154,10 @@ def main():
             **Not a substitute** for professional medical advice.
             Always consult a healthcare provider for medical concerns.
         """)
+        
+        if st.button("Clear Chat"):
+            st.session_state.messages = []
+            st.rerun()
 
 if __name__ == "__main__":
     main()
